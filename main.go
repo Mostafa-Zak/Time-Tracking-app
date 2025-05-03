@@ -48,6 +48,25 @@ func saveToFile(fileName string, data UsageData) {
 		fmt.Println("Error writing file:", err)
 	}
 }
+func showStat(data UsageData) {
+	go func() {
+		for {
+			var input string
+			fmt.Scan(&input)
+			if input == "s" {
+				fmt.Println("----- App Usage So Far -----")
+				for date, apps := range data {
+
+					fmt.Println("Date:", date)
+					for app, duration := range apps {
+						fmt.Printf("%s: %.2f minutes\n", app, duration.Minutes())
+					}
+				}
+			}
+		}
+	}()
+
+}
 func main() {
 	const fileName = "usage.json"
 	data := loadFromFile(fileName)
@@ -64,6 +83,7 @@ func main() {
 		saveToFile(fileName, data)
 		os.Exit(0)
 	}()
+	showStat(data)
 	for {
 		<-ticker
 		cmd := exec.Command("xdotool", "getactivewindow", "getwindowpid")
@@ -94,15 +114,6 @@ func main() {
 		}
 		lastApp = currentApp
 		lastCheck = now
-		fmt.Println("----- App Usage So Far -----")
-		for date, apps := range data {
-
-			fmt.Println("Date:", date)
-			for app, duration := range apps {
-				fmt.Printf("%s: %.2f minutes\n", app, duration.Minutes())
-			}
-		}
-
 		if lastApp != "" && currentApp == lastApp {
 			elapsed := now.Sub(lastCheck)
 			if elapsed > 0 {
