@@ -15,7 +15,6 @@ type DayUsage map[string]time.Duration
 type UsageData map[string]DayUsage // date -> { app -> duration }
 
 func loadFromFile(fileName string) UsageData {
-
 	data := make(UsageData)
 
 	// Check if file exists
@@ -37,6 +36,7 @@ func loadFromFile(fileName string) UsageData {
 	}
 	return data
 }
+
 func saveToFile(fileName string, data UsageData) {
 	bytes, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -48,6 +48,7 @@ func saveToFile(fileName string, data UsageData) {
 		fmt.Println("Error writing file:", err)
 	}
 }
+
 func showStat(data UsageData) {
 	go func() {
 		for {
@@ -56,7 +57,6 @@ func showStat(data UsageData) {
 			if input == "s" {
 				fmt.Println("----- App Usage So Far -----")
 				for date, apps := range data {
-
 					fmt.Println("Date:", date)
 					for app, duration := range apps {
 						fmt.Printf("%s: %.2f minutes\n", app, duration.Minutes())
@@ -65,14 +65,157 @@ func showStat(data UsageData) {
 			}
 		}
 	}()
-
 }
+
+// findInterestingProcess looks for a more meaningful process name in the process tree
+func findInterestingProcess(pid string) string {
+	// These are applications we want to track specifically
+	interestingApps := map[string]bool{
+		"vim":       true,
+		"nvim":      true,
+		"neovim":    true,
+		"emacs":     true,
+		"code":      true,
+		"python":    true,
+		"python3":   true,
+		"python2":   true,
+		"node":      true,
+		"java":      true,
+		"ruby":      true,
+		"perl":      true,
+		"go":        true,
+		"cargo":     true,
+		"rustc":     true,
+		"gcc":       true,
+		"clang":     true,
+		"g++":       true,
+		"make":      true,
+		"cmake":     true,
+		"docker":    true,
+		"kubectl":   true,
+		"terraform": true,
+		"npm":       true,
+		"yarn":      true,
+		"pip":       true,
+		"mysql":     true,
+		"psql":      true,
+		"mongodb":   true,
+		"redis-cli": true,
+	}
+
+	// First get the original process name
+	cmd := exec.Command("ps", "-p", pid, "-o", "comm=")
+	processBytes, err := cmd.Output()
+	if err != nil {
+		fmt.Println("Error getting original process name:", err)
+		return "unknown"
+	}
+	originalProcess := strings.TrimSpace(string(processBytes))
+
+	// Get all child processes recursively
+	childProcesses := getAllChildProcesses(pid)
+
+	// Look for interesting applications in child processes
+	for _, childPid := range childProcesses {
+		cmd := exec.Command("ps", "-p", childPid, "-o", "comm=")
+		processBytes, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+
+		processName := strings.TrimSpace(string(processBytes))
+
+		// Check if this is an interesting application
+		if interestingApps[processName] {
+			return processName
+		}
+	}
+
+	// If no interesting apps found in children, return original process
+	return originalProcess
+}
+
+// getAllChildProcesses returns all descendant processes of a given PID
+func getAllChildProcesses(pid string) []string {
+	allChildren := []string{}
+
+	// Get immediate children
+	cmd := exec.Command("pgrep", "-P", pid)
+	out, err := cmd.Output()
+	if err != nil {
+		return allChildren // No children found
+	}
+
+	children := strings.Fields(string(out))
+	allChildren = append(allChildren, children...)
+
+	// Recursively get children of children
+	for _, childPid := range children {
+		grandchildren := getAllChildProcesses(childPid)
+		allChildren = append(allChildren, grandchildren...)
+	}
+
+	return allChildren
+}
+
+// getWindowTitle gets the title of the active window
+func getWindowTitle() (string, error) {
+	cmd := exec.Command("xdotool", "getactivewindow", "getwindowname")
+	titleBytes, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(titleBytes)), nil
+}
+
+// getApplicationInfo returns application name and enriched info
+func getApplicationInfo() (string, error) {
+	// Get window PID
+	cmd := exec.Command("xdotool", "getactivewindow", "getwindowpid")
+	pidBytes, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("error getting PID: %w", err)
+	}
+	pid := strings.TrimSpace(string(pidBytes))
+
+	// Get process name
+	cmd = exec.Command("ps", "-p", pid, "-o", "comm=")
+	processBytes, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("error getting process name: %w", err)
+	}
+	appName := strings.TrimSpace(string(processBytes))
+
+	// For terminal apps, look deeper
+	terminalApps := map[string]bool{
+		"kitty":          true,
+		"alacritty":      true,
+		"gnome-terminal": true,
+		"konsole":        true,
+		"xterm":          true,
+		"urxvt":          true,
+		"terminator":     true,
+		"terminal":       true,
+		"iterm2":         true,
+	}
+
+	if terminalApps[appName] {
+		interestingApp := findInterestingProcess(pid)
+		if interestingApp != appName && interestingApp != "unknown" {
+			// Return both the terminal and the app inside it
+			return interestingApp, nil
+		}
+	}
+
+	return appName, nil
+}
+
 func main() {
 	const fileName = "usage.json"
 	data := loadFromFile(fileName)
 	var lastApp string
 	var lastCheck time.Time = time.Now()
-	ticker := time.Tick(10 * time.Second)
+	ticker := time.Tick(1 * time.Second)
 
 	// Handle Ctrl+C
 	sigChan := make(chan os.Signal, 1)
@@ -83,44 +226,40 @@ func main() {
 		saveToFile(fileName, data)
 		os.Exit(0)
 	}()
+
 	showStat(data)
+
 	for {
 		<-ticker
-		cmd := exec.Command("xdotool", "getactivewindow", "getwindowpid")
-		pidBytes, err := cmd.Output()
-		if err != nil {
-			fmt.Println("Error getting PID:", err)
-			continue
-		}
 
-		pid := strings.TrimSpace(string(pidBytes))
-		cmd2 := exec.Command("ps", "-p", pid, "-o", "comm=")
-		processBytes, err := cmd2.Output()
+		// Get app info
+		appName, err := getApplicationInfo()
 		if err != nil {
-			fmt.Println("Error getting process name:", err)
+			fmt.Println(err)
 			continue
 		}
-		currentApp := strings.TrimSpace(string(processBytes))
-		//track time
+		// Track time
 		now := time.Now()
 		dateKey := now.Format("2006-01-02")
+
+		// Ensure map for current date exists
 		if _, ok := data[dateKey]; !ok {
 			data[dateKey] = make(DayUsage)
 		}
 
+		// Add elapsed time for the previous app
 		if lastApp != "" {
 			elapsed := now.Sub(lastCheck)
 			data[dateKey][lastApp] += elapsed
 		}
-		lastApp = currentApp
+
+		// Update tracking info
+		lastApp = appName
 		lastCheck = now
-		if lastApp != "" && currentApp == lastApp {
-			elapsed := now.Sub(lastCheck)
-			if elapsed > 0 {
-				data[dateKey][lastApp] += elapsed
-				saveToFile("usage.json", data)
-			}
+
+		// Save data periodically
+		if now.Second()%10 == 0 { // Save every 10 seconds
+			saveToFile(fileName, data)
 		}
 	}
-
 }
