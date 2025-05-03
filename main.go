@@ -5,51 +5,67 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
-func loadFromFile(fileName string) map[string]time.Duration {
+type DayUsage map[string]time.Duration
+type UsageData map[string]DayUsage // date -> { app -> duration }
 
-	appTime := make(map[string]time.Duration)
+func loadFromFile(fileName string) UsageData {
+
+	data := make(UsageData)
 
 	// Check if file exists
 	if _, err := os.Stat(fileName); os.IsNotExist(err) {
 		// File does not exist, create an empty one
-		emptyData, _ := json.MarshalIndent(appTime, "", "  ")
+		emptyData, _ := json.MarshalIndent(data, "", "  ")
 		err := os.WriteFile(fileName, emptyData, 0644)
 		if err != nil {
 			fmt.Println("Error creating initial JSON file:", err)
 		}
-		return appTime
+		return data
 	}
 
 	// File exists, read and unmarshal
 	fileBytes, _ := os.ReadFile(fileName)
-	err := json.Unmarshal(fileBytes, &appTime)
+	err := json.Unmarshal(fileBytes, &data)
 	if err != nil {
 		fmt.Println("Error decoding JSON:", err)
 	}
-	return appTime
+	return data
 }
-func saveToFile(fileName string, appTime map[string]time.Duration) {
-	data, err := json.MarshalIndent(appTime, "", "  ")
+func saveToFile(fileName string, data UsageData) {
+	bytes, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		fmt.Println("Error encoding JSON:", err)
 		return
 	}
-	err = os.WriteFile(fileName, data, 0644)
+	err = os.WriteFile(fileName, bytes, 0644)
 	if err != nil {
 		fmt.Println("Error writing file:", err)
 	}
 }
 func main() {
-	appTime := loadFromFile("usage.json")
+	const fileName = "usage.json"
+	data := loadFromFile(fileName)
 	var lastApp string
 	var lastCheck time.Time = time.Now()
-	t := time.Tick(10 * time.Second)
+	ticker := time.Tick(10 * time.Second)
+
+	// Handle Ctrl+C
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Println("\nReceived interrupt signal. Saving usage data and exiting...")
+		saveToFile(fileName, data)
+		os.Exit(0)
+	}()
 	for {
-		<-t
+		<-ticker
 		cmd := exec.Command("xdotool", "getactivewindow", "getwindowpid")
 		pidBytes, err := cmd.Output()
 		if err != nil {
@@ -67,23 +83,31 @@ func main() {
 		currentApp := strings.TrimSpace(string(processBytes))
 		//track time
 		now := time.Now()
+		dateKey := now.Format("2006-01-02")
+		if _, ok := data[dateKey]; !ok {
+			data[dateKey] = make(DayUsage)
+		}
+
 		if lastApp != "" {
 			elapsed := now.Sub(lastCheck)
-			appTime[lastApp] += elapsed
+			data[dateKey][lastApp] += elapsed
 		}
 		lastApp = currentApp
 		lastCheck = now
 		fmt.Println("----- App Usage So Far -----")
-		for app, duration := range appTime {
+		for date, apps := range data {
 
-			fmt.Printf("%s: %.2f minutes\n", app, duration.Minutes())
+			fmt.Println("Date:", date)
+			for app, duration := range apps {
+				fmt.Printf("%s: %.2f minutes\n", app, duration.Minutes())
+			}
 		}
 
 		if lastApp != "" && currentApp == lastApp {
 			elapsed := now.Sub(lastCheck)
 			if elapsed > 0 {
-				appTime[lastApp] += elapsed
-				saveToFile("usage.json", appTime)
+				data[dateKey][lastApp] += elapsed
+				saveToFile("usage.json", data)
 			}
 		}
 	}
