@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+//TODO:Error Logging Instead of Printing for later improvement
+
 type DayUsage map[string]time.Duration
 type UsageData map[string]DayUsage // date -> { app -> duration }
 
@@ -53,12 +55,14 @@ func showStat(data UsageData) {
 	go func() {
 		for {
 			var input string
+			//TODO: improve user input handling using buffio instead or getred of it
 			fmt.Scan(&input)
 			if input == "s" {
 				fmt.Println("----- App Usage So Far -----")
 				for date, apps := range data {
 					fmt.Println("Date:", date)
 					for app, duration := range apps {
+						//TODO:improve formatting style
 						fmt.Printf("%s: %.2f minutes\n", app, duration.Minutes())
 					}
 				}
@@ -68,6 +72,8 @@ func showStat(data UsageData) {
 }
 
 // findInterestingProcess looks for a more meaningful process name in the process tree
+
+// TODO: improving this function
 func findInterestingProcess(pid string) string {
 	// These are applications we want to track specifically
 	interestingApps := map[string]bool{
@@ -215,8 +221,8 @@ func main() {
 	data := loadFromFile(fileName)
 	var lastApp string
 	var lastCheck time.Time = time.Now()
-	ticker := time.Tick(1 * time.Second)
-
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 	// Handle Ctrl+C
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -229,37 +235,40 @@ func main() {
 
 	showStat(data)
 
-	for {
-		<-ticker
+	go func() {
+		for range ticker.C {
+			// Get app info
+			appName, err := getApplicationInfo()
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			// Track time
+			now := time.Now()
+			dateKey := now.Format("2006-01-02")
 
-		// Get app info
-		appName, err := getApplicationInfo()
-		if err != nil {
-			fmt.Println(err)
-			continue
+			// Ensure map for current date exists
+			if _, ok := data[dateKey]; !ok {
+				data[dateKey] = make(DayUsage)
+			}
+
+			// Add elapsed time for the previous app
+			if lastApp != "" {
+				elapsed := now.Sub(lastCheck)
+				data[dateKey][lastApp] += elapsed
+			}
+
+			// Update tracking info
+			lastApp = appName
+			lastCheck = now
+
+			// Save data periodically
+			//TODO:Prevent Unnecessary File Writes Every Tick to be when changes occur
+			if now.Second()%10 == 0 { // Save every 10 seconds
+				saveToFile(fileName, data)
+			}
 		}
-		// Track time
-		now := time.Now()
-		dateKey := now.Format("2006-01-02")
-
-		// Ensure map for current date exists
-		if _, ok := data[dateKey]; !ok {
-			data[dateKey] = make(DayUsage)
-		}
-
-		// Add elapsed time for the previous app
-		if lastApp != "" {
-			elapsed := now.Sub(lastCheck)
-			data[dateKey][lastApp] += elapsed
-		}
-
-		// Update tracking info
-		lastApp = appName
-		lastCheck = now
-
-		// Save data periodically
-		if now.Second()%10 == 0 { // Save every 10 seconds
-			saveToFile(fileName, data)
-		}
-	}
+	}()
+	done := make(chan struct{})
+	<-done // keep main alive forever
 }
