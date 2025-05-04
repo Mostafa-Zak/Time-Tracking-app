@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -53,27 +52,14 @@ func saveToFile(fileName string, data UsageData) {
 }
 
 func showStat(data UsageData) {
-	go func() {
-		for {
-			//TODO: improve user input handling using buffio instead or getred of it
-			reader := bufio.NewReader(os.Stdin)
-			char, _, err := reader.ReadRune()
-			if err != nil {
-				fmt.Println("error reading input: \n", err)
-				continue
-			}
-			if char == 's' {
-				fmt.Println("----- App Usage So Far -----")
-				for date, apps := range data {
-					fmt.Println("Date:", date)
-					for app, duration := range apps {
-						//TODO:improve formatting style
-						fmt.Printf("%s: %.2f minutes\n", app, duration.Minutes())
-					}
-				}
-			}
+	fmt.Println("----- App Usage So Far -----")
+	for date, apps := range data {
+		fmt.Println("Date:", date)
+		for app, duration := range apps {
+			//TODO:improve formatting style
+			fmt.Printf("%s: %.2f minutes\n", app, duration.Minutes())
 		}
-	}()
+	}
 }
 
 // findInterestingProcess looks for a more meaningful process name in the process tree
@@ -222,6 +208,7 @@ func getApplicationInfo() (string, error) {
 }
 
 func main() {
+
 	const fileName = "usage.json"
 	data := loadFromFile(fileName)
 	var lastApp string
@@ -237,8 +224,6 @@ func main() {
 		saveToFile(fileName, data)
 		os.Exit(0)
 	}()
-
-	showStat(data)
 
 	go func() {
 		for range ticker.C {
@@ -269,11 +254,23 @@ func main() {
 
 			// Save data periodically
 			//TODO:Prevent Unnecessary File Writes Every Tick to be when changes occur
-			if now.Second()%10 == 0 { // Save every 10 seconds
+
+			var lastSavedApp string
+			var lastSavedTime time.Time
+			if appName != lastSavedApp || now.Sub(lastSavedTime) > 1*time.Minute {
 				saveToFile(fileName, data)
+				lastSavedApp = appName
+				lastSavedTime = now
 			}
+
 		}
 	}()
+
+	if len(os.Args) > 1 && os.Args[1] == "stats" {
+		showStat(data)
+		os.Exit(0)
+	}
+
 	done := make(chan struct{})
 	<-done // keep main alive forever
 }
