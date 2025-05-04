@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -54,10 +55,14 @@ func saveToFile(fileName string, data UsageData) {
 func showStat(data UsageData) {
 	go func() {
 		for {
-			var input string
 			//TODO: improve user input handling using buffio instead or getred of it
-			fmt.Scan(&input)
-			if input == "s" {
+			reader := bufio.NewReader(os.Stdin)
+			char, _, err := reader.ReadRune()
+			if err != nil {
+				fmt.Println("error reading input: \n", err)
+				continue
+			}
+			if char == 's' {
 				fmt.Println("----- App Usage So Far -----")
 				for date, apps := range data {
 					fmt.Println("Date:", date)
